@@ -3,6 +3,9 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
+
+#define MAX_PFDS 32
 
 // Macro for error checking
 #define DIE(assertion, call_description)                                       \
