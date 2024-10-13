@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
-#define MAX_PFDS 32
+#define MAX_PFDS 5
 
 // Macro for error checking
 #define DIE(assertion, call_description)                                       \

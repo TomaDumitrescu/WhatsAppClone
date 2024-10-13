@@ -140,7 +140,7 @@ void run_chat_multi_server(int listenfd) {
             read(timerfd, &exp, sizeof(exp));
 
             struct chat_packet ad;
-            char ad_msg[50] = "For 2.99$ per month, you can disable ads\n\0";
+            char ad_msg[50] = "Server: For 2.99$ per month, you can disable ads\n\0";
             ad.len = strlen(ad_msg);
             strcpy(ad.message, ad_msg);
 
@@ -171,7 +171,7 @@ void run_chat_multi_server(int listenfd) {
                     poll_fds[i].fd, received_packet.message);
 
             for (int j = 1; j < num_sockets; j++) {
-              if (poll_fds[j].fd == poll_fds[i].fd)
+              if (poll_fds[j].fd == poll_fds[i].fd || poll_fds[j].fd == timerfd)
                 continue;
 
               int res = send_all(poll_fds[j].fd, &received_packet, sizeof(received_packet));

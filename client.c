@@ -14,7 +14,7 @@
 #include "common.h"
 #include "helpers.h"
 
-void run_client(int sockfd) {
+void run_client(int sockfd, char *user_name) {
   char buf[MSG_MAXSIZE + 1];
   memset(buf, 0, MSG_MAXSIZE + 1);
 
@@ -30,7 +30,7 @@ void run_client(int sockfd) {
   pfds[nfds].events = POLLIN;
   nfds++;
 
-  // Server socker
+  // Server socket
   pfds[nfds].fd = sockfd;
   pfds[nfds].events = POLLIN;
   nfds++;
@@ -45,8 +45,9 @@ void run_client(int sockfd) {
 
       // Processing input from keyboard
       if (i == 0 && (fgets(buf, sizeof(buf), stdin) && !isspace(buf[0]))) {
-        sent_packet.len = strlen(buf) + 1;
-        strcpy(sent_packet.message, buf);
+        sent_packet.len = strlen(buf) + strlen(user_name) + 1;
+        strcpy(sent_packet.message, user_name);
+        strcat(sent_packet.message, buf);
 
         // Send the packet to the server
         send_all(sockfd, &sent_packet, sizeof(sent_packet));
@@ -68,10 +69,14 @@ void run_client(int sockfd) {
 }
 
 int main(int argc, char *argv[]) {
-  if (argc != 3) {
-    printf("\n Usage: %s <ip> <port>\n", argv[0]);
+  if (argc != 4) {
+    printf("\n Usage: %s <ip> <port> <user_name>\n", argv[0]);
     return 1;
   }
+
+  char user_name[50];
+  strcpy(user_name, argv[3]);
+  strcat(user_name, ": ");
 
   // Convert port string to a number
   uint16_t port;
@@ -96,7 +101,7 @@ int main(int argc, char *argv[]) {
   rc = connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
   DIE(rc < 0, "connect");
 
-  run_client(sockfd);
+  run_client(sockfd, user_name);
 
   // Closing the connection and the socket
   close(sockfd);
