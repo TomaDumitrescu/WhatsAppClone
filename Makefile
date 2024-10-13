@@ -11,7 +11,7 @@ all: server client
 common.o: common.c
 
 # Compile server.c
-server: server.c common.o
+server: server.c -lpthread common.o
 
 # Compile client.c
 client: client.c common.o

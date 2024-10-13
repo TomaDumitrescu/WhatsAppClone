@@ -7,6 +7,8 @@
 
 #define MAX_PFDS 5
 
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
 // Macro for error checking
 #define DIE(assertion, call_description)                                       \
   do {                                                                         \

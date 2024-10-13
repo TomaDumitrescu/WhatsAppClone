@@ -4,16 +4,21 @@
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <sys/timerfd.h>
+#include <pthread.h>
 
 #include "common.h"
 #include "helpers.h"
 
 #define MAX_CONNECTIONS 32
+#define MAX_MESSAGES 100
+#define NUM_THREADS 4
+#define MAX_MATCHES 5
 
 // Receiving data on connfd1 and sending the message on connfd2
 int receive_and_send(int connfd1, int connfd2, size_t len) {
@@ -37,51 +42,73 @@ int receive_and_send(int connfd1, int connfd2, size_t len) {
   return bytes_received;
 }
 
-void run_chat_server(int listenfd) {
-  struct sockaddr_in client_addr1;
-  struct sockaddr_in client_addr2;
-  socklen_t clen1 = sizeof(client_addr1);
-  socklen_t clen2 = sizeof(client_addr2);
+typedef struct arg_search arg_search;
+struct arg_search {
+  int thread_id;
+  char phrase[30];
+};
 
-  int connfd1 = -1;
-  int connfd2 = -1;
-  int rc;
+int cnt = 0, matches = 0;
+struct chat_packet history[MAX_MESSAGES], match_packets[MAX_MATCHES];
 
-  // Set listenfd socket for listening
-  rc = listen(listenfd, 2);
-  DIE(rc < 0, "listen");
+void *search(void *arg) {
+  int id = ((arg_search *)(arg))->thread_id;
+  int start = id * (double)cnt / NUM_THREADS;
+  int end = MIN((id + 1) * (double)cnt / NUM_THREADS, cnt);
 
-  // Accepting two connections
-  printf("Waiting for the client 1 connection...\n");
-  connfd1 = accept(listenfd, (struct sockaddr *)&client_addr1, &clen1);
-  DIE(connfd1 < 0, "accept");
-
-  printf("Waiting for the client 2 connection...\n");
-  connfd2 = accept(listenfd, (struct sockaddr *)&client_addr2, &clen2);
-  DIE(connfd2 < 0, "accept");
-
-  while (true) {
-    printf("Receiving from 1, sending to 2...\n");
-    int rc = receive_and_send(connfd1, connfd2, sizeof(struct chat_packet));
-    if (rc <= 0)
-      break;
-
-    printf("Receiving from 2, sending to 1...\n");
-    rc = receive_and_send(connfd2, connfd1, sizeof(struct chat_packet));
-    if (rc <= 0)
-      break;
+  for (int i = start; i < end; i++) {
+    char *match = strstr(history[i].message, ((arg_search *)arg)->phrase);
+    if (match) {
+      match_packets[matches].len = strlen(history[i].message);
+      strcpy(match_packets[matches++].message, history[i].message);
+    }
   }
 
-  // Closing the connections and the created sockets
-  close(connfd1);
-  close(connfd2);
+  return NULL;
+}
+
+void search_chat(char *phrase) {
+  pthread_t threads[NUM_THREADS];
+  matches = 0;
+
+  arg_search args[NUM_THREADS];
+
+  int phrase_len = strlen(phrase);
+  for (int i = 0; i < NUM_THREADS; i++) {
+    args[i].thread_id = i;
+    strncpy(args[i].phrase, phrase, phrase_len);
+  }
+
+  for (int i = 0; i < NUM_THREADS; i++) {
+    int rc = pthread_create(&threads[i], NULL, search,  (void *)&args[i]);
+    DIE(rc == 1, "pthread_create error\n");
+  }
+
+  void *status;
+  for (int i = 0; i < NUM_THREADS; i++) {
+    int rc = pthread_join(threads[i], &status);
+    DIE(rc == 1, "pthread_join error\n");
+  }
+
+  printf("Total matches %d\n", matches);
+  for (int i = 0; i < matches; i++) {
+    struct chat_packet *match = &match_packets[i];
+
+    printf("Match %d:\n", i + 1);
+
+    // Write only match->len characters since overwriting
+    for (int j = 0; j < match->len; j++)
+      printf("%c", match->message[j]);
+
+    printf("\n");
+  }
 }
 
 void run_chat_multi_server(int listenfd) {
-
   struct pollfd poll_fds[MAX_CONNECTIONS];
-  int num_sockets = 2;
+  int num_sockets = 3;
   int rc;
+  char buf[MSG_MAXSIZE];
 
   struct chat_packet received_packet;
 
@@ -110,6 +137,9 @@ void run_chat_multi_server(int listenfd) {
   poll_fds[1].fd = timerfd;
   poll_fds[1].events = POLLIN;
 
+  poll_fds[2].fd = STDIN_FILENO;
+  poll_fds[2].events = POLLIN;
+
   while (1) {
     // Waiting to receive something from one socket
     rc = poll(poll_fds, num_sockets, -1);
@@ -117,6 +147,18 @@ void run_chat_multi_server(int listenfd) {
 
     for (int i = 0; i < num_sockets; i++) {
       if (poll_fds[i].revents & POLLIN) {
+        if (poll_fds[i].fd == STDIN_FILENO) {
+          // Processing input from keyboard
+          if (fgets(buf, sizeof(buf), stdin) && !isspace(buf[0])) {
+            if (strcmp(strtok(buf, " \n"), "search") == 0) {
+              char *phrase = strtok(NULL, " \n");
+              search_chat(phrase);
+            }
+
+            fflush(stdin);
+          }
+        }
+
         if (poll_fds[i].fd == listenfd) {
           // Connection request from the listenfd socket
           struct sockaddr_in cli_addr;
@@ -146,11 +188,15 @@ void run_chat_multi_server(int listenfd) {
 
             // Send the ad to all clients
             for (int j = 1; j < num_sockets; j++) {
-                if (poll_fds[j].fd != timerfd && poll_fds[j].fd != listenfd) {
+                if (poll_fds[j].fd != timerfd && poll_fds[j].fd != listenfd
+                    && poll_fds[j].fd != STDIN_FILENO) {
                     send_all(poll_fds[j].fd, &ad, sizeof(ad));
                 }
             }
         } else {
+          if (poll_fds[i].fd == STDIN_FILENO)
+            continue;
+
           // Received data from one of the sockets
           int rc = recv_all(poll_fds[i].fd, &received_packet,
                             sizeof(received_packet));
@@ -171,12 +217,18 @@ void run_chat_multi_server(int listenfd) {
                     poll_fds[i].fd, received_packet.message);
 
             for (int j = 1; j < num_sockets; j++) {
-              if (poll_fds[j].fd == poll_fds[i].fd || poll_fds[j].fd == timerfd)
+              if (poll_fds[j].fd == poll_fds[i].fd || poll_fds[j].fd == timerfd
+                  || poll_fds[j].fd == STDIN_FILENO)
                 continue;
 
               int res = send_all(poll_fds[j].fd, &received_packet, sizeof(received_packet));
               DIE(res <= 0, "send_all error\n");
             }
+
+            history[cnt].len = received_packet.len;
+            strcpy(history[cnt].message, received_packet.message);
+            if (cnt < MAX_MESSAGES)
+              cnt++;
           }
         }
       }
@@ -218,7 +270,6 @@ int main(int argc, char *argv[]) {
   rc = bind(listenfd, (const struct sockaddr *)&serv_addr, sizeof(serv_addr));
   DIE(rc < 0, "bind");
 
-  // run_chat_server(listenfd);
   run_chat_multi_server(listenfd);
 
   // Close listenfd socket
