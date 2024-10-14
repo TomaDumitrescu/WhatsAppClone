@@ -1,5 +1,6 @@
 ### Copyright 2024 Toma-Ioan Dumitrescu
 
+
 ### Description
 
 The project represents a chat app on the model client-server, using TCP protocol,
