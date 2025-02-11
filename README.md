@@ -22,5 +22,4 @@ It is created using Python and Mininet: N clients connected to a router with N +
 interfaces, the router communicating with the server.
 
 Example of a command to test the program:
-
 sudo python3 topo.py --clients 7
